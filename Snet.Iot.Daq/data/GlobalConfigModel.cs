@@ -49,7 +49,7 @@ namespace Snet.Iot.Daq.data
         /// <summary>
         /// 项目数据
         /// </summary>
-        public static ObservableCollection<IProjectTreeViewModel> ProjectDict { get; set; }
+        public static ObservableCollection<IProjectTreeViewModel> ProjectDict { get; set; } = [];
 
         /// <summary>
         /// 数据库路径
@@ -57,19 +57,25 @@ namespace Snet.Iot.Daq.data
         public static readonly string dbPath = Path.Combine(AppContext.BaseDirectory, "db", "address.db");
 
         /// <summary>
+        /// 数据库操作锁对象<br/>
+        /// SQLiteConnection 不是线程安全的，所有数据库读写必须在此锁内执行
+        /// </summary>
+        public static readonly object DbLock = new();
+
+        /// <summary>
         /// 数据库的操作
         /// </summary>
-        public static SQLiteConnection sqliteOperate;
+        public static SQLiteConnection sqliteOperate = null!;
 
         /// <summary>
         /// Opcua服务端
         /// </summary>
-        public static OpcUaServiceOperate uaService;
+        public static OpcUaServiceOperate? uaService;
 
         /// <summary>
         /// Mqtt服务端
         /// </summary>
-        public static MqttServiceOperate mqttService;
+        public static MqttServiceOperate? mqttService;
 
         /// <summary>
         /// 刷新插件信息方法

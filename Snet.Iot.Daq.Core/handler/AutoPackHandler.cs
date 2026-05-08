@@ -83,6 +83,11 @@ namespace Snet.Iot.Daq.Core.handler
         }
 
         /// <summary>
+        /// 用于 GroupAndSortAddresses 中按区域去重的辅助字典（复用以减少 GC）
+        /// </summary>
+        private readonly Dictionary<string, HashSet<string>> _seenTails = new();
+
+        /// <summary>
         /// 无参构造函数
         /// </summary>
         public AutoPackHandler() : base() { }
@@ -144,7 +149,7 @@ namespace Snet.Iot.Daq.Core.handler
         public List<IAddressModel>? AddressAutoPack(List<IAddressModel> addressModels, string deviceType = "SiemensS7Net", int maxByteLength = 200, DataFormat format = DataFormat.ABCD)
         {
             Address address = new Address();
-            address.AddressArray = addressModels.Where(m => m.ExpandParam == null).Select(m => new AddressDetails
+            address.AddressArray = addressModels.Where(m => string.IsNullOrEmpty(m.ExpandParam)).Select(m => new AddressDetails
             {
                 AddressName = m.Address,
                 AddressDataType = m.Type,
@@ -213,18 +218,20 @@ namespace Snet.Iot.Daq.Core.handler
                     dict[dbHead] = list;
                 }
 
-                // HashSet 去重，O(1) 查找替代原 O(n) 线性扫描
-                bool duplicate = false;
-                for (int j = 0; j < list.Count; j++)
+                // 使用同一区域的 seen 集合实现 O(1) 去重
+                if (!_seenTails.TryGetValue(dbHead, out var seen))
                 {
-                    if (list[j].DbTail == dbTail) { duplicate = true; break; }
+                    seen = new HashSet<string>();
+                    _seenTails[dbHead] = seen;
                 }
-                if (duplicate) continue;
+                if (!seen.Add(dbTail)) continue;
 
                 var (byteIndex, bitIndex) = ParseDb(dbTail);
                 int len = addr.AddressDataType == DataType.Bool ? 1 : addr.AddressDataType.ReadGetLength();
                 list.Add(new AddrInfo(dbTail, byteIndex, bitIndex, addr.AddressDataType, len));
             }
+
+            _seenTails.Clear();
 
             // 每组按 (字节索引, 位索引) 升序排列，确保连续性最优
             foreach (var kv in dict)
@@ -370,7 +377,10 @@ namespace Snet.Iot.Daq.Core.handler
             int dot = span.LastIndexOf('.');
 
             if (dot > 0)
-                return (ParseNumber(span.Slice(0, dot)), int.Parse(span.Slice(dot + 1)));
+            {
+                int.TryParse(span.Slice(dot + 1), out int bit);
+                return (ParseNumber(span.Slice(0, dot)), bit);
+            }
 
             return (ParseNumber(span), 0);
         }

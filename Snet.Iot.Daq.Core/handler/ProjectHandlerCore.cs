@@ -2,6 +2,7 @@
 using Snet.Iot.Daq.Core.@enum;
 using Snet.Iot.Daq.Core.@interface;
 using Snet.Utility;
+using SQLite;
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Text;
@@ -148,7 +149,7 @@ namespace Snet.Iot.Daq.Core.handler
                 node.Children == null ||
                 node.Children.Count == 0;
 
-            // 🔑 关键判断
+            // 关键判断
             if (!string.IsNullOrWhiteSpace(node.Name))
             {
                 if (needBase || !isLeaf)
@@ -345,7 +346,7 @@ namespace Snet.Iot.Daq.Core.handler
                 node.Children == null ||
                 node.Children.Count == 0;
 
-            // 🔑 关键判断
+            // 关键判断
             if (!string.IsNullOrWhiteSpace(node.Name))
             {
                 if (needBase || !isLeaf)
@@ -676,8 +677,10 @@ namespace Snet.Iot.Daq.Core.handler
 
 
         /// <summary>
-        /// 使用 ToString() 匹配节点，
-        /// 只更新 IsSoftStart，并返回源集合中的对象
+        /// 使用 ToString() 匹配节点，只更新 IsSoftStart，并返回源集合中的对象。<br/>
+        /// <b>注意：</b>匹配依赖 <see cref="IProjectTreeViewModel.ToString()"/> 的唯一性，
+        /// 若多个节点 ToString() 相同则仅更新第一个命中节点。
+        /// 如需严格唯一性匹配，改用基于 Guid/引用的方法。
         /// </summary>
         /// <param name="source">树根集合</param>
         /// <param name="newModel">新的节点数据</param>
@@ -709,5 +712,136 @@ namespace Snet.Iot.Daq.Core.handler
         }
 
 
+        /// <summary>
+        /// 带重试机制的异步文件写入。<br/>
+        /// 遇到文件被占用（<see cref="IOException"/>）时最多重试 <paramref name="maxRetries"/> 次，
+        /// 每次间隔 <paramref name="delayMilliseconds"/> 毫秒；其他异常直接返回失败。
+        /// </summary>
+        /// <param name="path">目标文件路径</param>
+        /// <param name="data">写入内容</param>
+        /// <param name="maxRetries">最大重试次数，默认 5</param>
+        /// <param name="delayMilliseconds">重试间隔（毫秒），默认 500</param>
+        /// <param name="onRetry">可选的重试回调，参数为（当前次数, 异常信息）</param>
+        /// <param name="onError">可选的错误回调，参数为异常信息</param>
+        /// <returns>true 表示写入成功；false 表示超过重试次数或发生非 IO 异常</returns>
+        public static async Task<bool> WriteToFileWithRetryAsync(
+            string path,
+            string data,
+            int maxRetries = 5,
+            int delayMilliseconds = 500,
+            Action<int, string>? onRetry = null,
+            Action<string>? onError = null)
+        {
+            int retries = 0;
+
+            while (retries < maxRetries)
+            {
+                try
+                {
+                    await WriteToFileAsync(path, data);
+                    return true;
+                }
+                catch (IOException ex)
+                {
+                    retries++;
+                    onRetry?.Invoke(retries, ex.Message);
+                    if (retries < maxRetries)
+                        await Task.Delay(delayMilliseconds);
+                }
+                catch (Exception ex)
+                {
+                    onError?.Invoke(ex.Message);
+                    return false;
+                }
+            }
+
+            onError?.Invoke($"文件写入失败，已重试 {maxRetries} 次，文件可能被长时间占用：{path}");
+            return false;
+        }
+
+        /// <summary>
+        /// 批量插入（防重复），基于指定字段查重。<br/>
+        /// 先读取数据库中所有已有记录建立 Key 集合，再在事务内插入不重复的项。
+        /// </summary>
+        /// <typeparam name="T">实体类型（需有无参构造）</typeparam>
+        /// <typeparam name="TKey">查重字段类型</typeparam>
+        /// <param name="db">SQLite 连接</param>
+        /// <param name="dbLock">数据库访问锁（<see cref="SQLiteConnection"/> 非线程安全，由调用方提供）</param>
+        /// <param name="items">待插入的数据集合</param>
+        /// <param name="onInserted">可选回调，每次成功插入后对实体执行（可用于同步缓存）</param>
+        /// <param name="keySelectors">查重字段选择器，支持多个</param>
+        /// <returns>插入结果统计（成功数、重复数、失败数）</returns>
+        public static BatchInsertResult InsertUnique<T, TKey>(
+            SQLite.SQLiteConnection db,
+            object dbLock,
+            IEnumerable<T> items,
+            Action<T>? onInserted = null,
+            params Func<T, TKey>[] keySelectors)
+                where T : class, new()
+        {
+            var result = new BatchInsertResult();
+
+            lock (dbLock)
+            {
+                // 1. 读取已有数据，建立各字段的 Key 集合
+                var existingKeys = keySelectors
+                    .Select(_ => new HashSet<TKey>())
+                    .ToArray();
+
+                foreach (var existing in db.Table<T>())
+                {
+                    for (int i = 0; i < keySelectors.Length; i++)
+                    {
+                        var key = keySelectors[i](existing);
+                        if (key != null)
+                            existingKeys[i].Add(key);
+                    }
+                }
+
+                // 2. 在事务内插入不重复的项
+                db.RunInTransaction(() =>
+                {
+                    foreach (var item in items)
+                    {
+                        bool isDuplicate = false;
+
+                        for (int i = 0; i < keySelectors.Length; i++)
+                        {
+                            var key = keySelectors[i](item);
+                            if (key != null && existingKeys[i].Contains(key))
+                            {
+                                isDuplicate = true;
+                                break;
+                            }
+                        }
+
+                        if (isDuplicate)
+                        {
+                            result.Duplicate++;
+                            continue;
+                        }
+
+                        if (db.Insert(item) > 0)
+                        {
+                            result.Success++;
+                            onInserted?.Invoke(item);
+
+                            for (int i = 0; i < keySelectors.Length; i++)
+                            {
+                                var key = keySelectors[i](item);
+                                if (key != null)
+                                    existingKeys[i].Add(key);
+                            }
+                        }
+                        else
+                        {
+                            result.Failed++;
+                        }
+                    }
+                });
+            }
+
+            return result;
+        }
     }
 }

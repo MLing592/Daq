@@ -6,7 +6,6 @@ using Snet.Iot.Daq.viewModel;
 using Snet.Log;
 using Snet.Utility;
 using System.Collections.ObjectModel;
-using System.IO;
 
 namespace Snet.Iot.Daq.handler
 {
@@ -46,42 +45,22 @@ namespace Snet.Iot.Daq.handler
         /// </summary>
         /// <param name="data">待保存的项目树数据</param>
         /// <param name="path">配置文件保存路径</param>
-        public static async Task SaveConfigAsync(ObservableCollection<IProjectTreeViewModel> data, string path)
+        /// <returns>true 表示写入成功；false 表示达到最大重试次数或发生非 IO 异常</returns>
+        public static async Task<bool> SaveConfigAsync(ObservableCollection<IProjectTreeViewModel> data, string path)
         {
-            // 重试策略参数
-            const int maxRetries = 5;
-            const int delayMilliseconds = 500;
-            int retries = 0;
-            bool fileWritten = false;
+            bool fileWritten = await ProjectHandlerCore.WriteToFileWithRetryAsync(
+                path,
+                data.ToJson(true),
+                onRetry: (retries, msg) => LogHelper.Error($"文件被占用，重试 {retries}/5：{msg}"),
+                onError: msg => LogHelper.Error($"配置保存失败: {msg}"));
 
-            while (retries < maxRetries && !fileWritten)
+            if (fileWritten)
             {
-                try
-                {
-                    // 序列化并写入文件
-                    await ProjectHandlerCore.WriteToFileAsync(path, data.ToJson(true));
-                    fileWritten = true;
-                    _ = GlobalConfigModel.RefreshAsync().ConfigureAwait(false);
-                }
-                catch (IOException ex)
-                {
-                    // 文件被占用时记录详细异常信息并重试
-                    retries++;
-                    LogHelper.Error($"文件被占用，重试 {retries}/{maxRetries}：{ex.Message}");
-                    await Task.Delay(delayMilliseconds);
-                }
-                catch (Exception ex)
-                {
-                    // 其他异常直接记录并中止重试
-                    LogHelper.Error($"配置保存失败: {ex.Message}", exception: ex);
-                    break;
-                }
+                _ = GlobalConfigModel.RefreshAsync()
+                    .ContinueWith(t => LogHelper.Error(t.Exception?.Message), TaskContinuationOptions.OnlyOnFaulted);
             }
 
-            if (!fileWritten)
-            {
-                LogHelper.Error("配置文件写入失败，文件可能被长时间占用。");
-            }
+            return fileWritten;
         }
 
         /// <summary>
@@ -188,9 +167,8 @@ namespace Snet.Iot.Daq.handler
         }
 
         /// <summary>
-        /// 获取所有已经存在的
+        /// 获取所有已经存在的项目配置，从 JSON 文件加载并回灌全局字典
         /// </summary>
-        /// <param name="obj"></param>
         public static ObservableCollection<IProjectTreeViewModel> GetAllProject()
         {
             GlobalConfigModel.ProjectDict = ProjectHandlerCore.GetConfig<ObservableCollection<IProjectTreeViewModel>>(GlobalConfigModel.UI_ProjectConfigPath)?.GetSource<ObservableCollection<IProjectTreeViewModel>>() ?? new();

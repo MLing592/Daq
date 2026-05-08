@@ -121,11 +121,9 @@ namespace Snet.Iot.Daq.Handler
         {
             _cts = new CancellationTokenSource();
 
-            _listenerTask = Task.Factory.StartNew(
-                PipeListenerLoop,
-                _cts.Token,
-                TaskCreationOptions.LongRunning,
-                TaskScheduler.Default);
+            // Task.Factory.StartNew 传入 async 方法会产生 Task<Task>，内层 Task 被丢弃。
+            // 使用 Task.Run 可正确展开异步方法返回的 Task。
+            _listenerTask = Task.Run(PipeListenerLoop, _cts.Token);
         }
 
         /// <summary>
@@ -189,13 +187,8 @@ namespace Snet.Iot.Daq.Handler
 
             _disposed = true;
 
-            try
-            {
-                _cts?.Cancel();
-                _listenerTask?.Wait(1000);
-            }
-            catch { }
-
+            // 取消管道监听；不用 Wait 阻塞，避免在 UI 线程调用时死锁。
+            _cts?.Cancel();
             _cts?.Dispose();
 
             if (_isFirstInstance)

@@ -14,13 +14,14 @@ namespace Snet.Pack.Manage.Tool
 
         static List<string> GetPackageList() => new()
         {
+            //传输插件
             "Snet.Mqtt",
             "Snet.Kafka",
             "Snet.RabbitMQ",
             "Snet.Netty",
             "Snet.NetMQ",
 
-
+            //采集插件
             "Snet.AllenBradley",
             "Snet.Beckhoff",
             "Snet.DB",

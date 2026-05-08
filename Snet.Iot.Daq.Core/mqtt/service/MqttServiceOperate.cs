@@ -2,7 +2,6 @@
 using Snet.Core.extend;
 using Snet.Model.data;
 using Snet.Model.@interface;
-using System.Dynamic;
 using System.Text;
 using static Snet.Iot.Daq.Core.mqtt.service.MqttServiceData;
 
@@ -77,17 +76,9 @@ namespace Snet.Iot.Daq.Core.mqtt.service
         /// </summary>
         private Task MqttServer_ApplicationMessageNotConsumedAsync(ApplicationMessageNotConsumedEventArgs arg)
         {
-            switch (arg.ApplicationMessage.PayloadFormatIndicator)
+            if (arg.ApplicationMessage.PayloadFormatIndicator == MQTTnet.Protocol.MqttPayloadFormatIndicator.CharacterData)
             {
-                case MQTTnet.Protocol.MqttPayloadFormatIndicator.Unspecified:
-                    break;
-
-                case MQTTnet.Protocol.MqttPayloadFormatIndicator.CharacterData:
-                    dynamic DynamicObj = new ExpandoObject();
-                    DynamicObj.Messages = arg.ApplicationMessage;
-                    DynamicObj.SenderID = arg.SenderId;
-                    OnInfoEventHandler(this, new EventInfoResult(true, $"[ {Steps.客户端消息事件} ]( {arg.SenderId} ) 发布了主题 ( {arg.ApplicationMessage.Topic} ) 内容 ( {Encoding.UTF8.GetString(arg.ApplicationMessage.Payload)} )"));
-                    break;
+                OnInfoEventHandler(this, new EventInfoResult(true, $"[ {Steps.客户端消息事件} ]( {arg.SenderId} ) 发布了主题 ( {arg.ApplicationMessage.Topic} ) 内容 ( {Encoding.UTF8.GetString(arg.ApplicationMessage.Payload)} )"));
             }
             return Task.CompletedTask;
         }
@@ -148,69 +139,63 @@ namespace Snet.Iot.Daq.Core.mqtt.service
         }
 
         /// <inheritdoc/>
-        public OperateResult On()
+        public OperateResult On() => Task.Run(() => OnAsync()).GetAwaiter().GetResult();
+
+        /// <inheritdoc/>
+        public OperateResult Off(bool hardClose = false) => Task.Run(() => OffAsync(hardClose)).GetAwaiter().GetResult();
+
+        /// <inheritdoc/>
+        public OperateResult GetStatus()
         {
-            //开始记录运行时间
+            return EndOperate(states == States.On, states == States.On ? "已启动" : "未启动", methodName: BegOperate());
+        }
+
+        /// <inheritdoc/>
+        public async Task<OperateResult> OnAsync(CancellationToken token = default)
+        {
             BegOperate();
             try
             {
-                //实例化对象
                 MqttServerOptionsBuilder mqttServerOptionsBuilder = new MqttServerOptionsBuilder();
-                //设置默认的本地IP
                 mqttServerOptionsBuilder.WithDefaultEndpoint();
-                //设置端口
                 mqttServerOptionsBuilder.WithDefaultEndpointPort(Convert.ToInt32(basics.Port));
-                //最大连接数
                 mqttServerOptionsBuilder.WithConnectionBacklog(basics.MaxNumber);
-                //创建MQTT服务
                 mqttServer = new MqttServerFactory().CreateMqttServer(mqttServerOptionsBuilder.Build());
-                //身份验证（异步）
                 mqttServer.ValidatingConnectionAsync += MqttServer_ValidatingConnectionAsync;
-                //消息接收（异步）
                 mqttServer.ApplicationMessageNotConsumedAsync += MqttServer_ApplicationMessageNotConsumedAsync;
-                //客户端连接（异步）
                 mqttServer.ClientConnectedAsync += MqttServer_ClientConnectedAsync;
-                //客户端断开（异步）
                 mqttServer.ClientDisconnectedAsync += MqttServer_ClientDisconnectedAsync;
-                //客户端订阅事件（异步）
                 mqttServer.ClientSubscribedTopicAsync += MqttServer_ClientSubscribedTopicAsync;
-                //客户端取消订阅（异步）
                 mqttServer.ClientUnsubscribedTopicAsync += MqttServer_ClientUnsubscribedTopicAsync;
-                //启动后事件（异步）
                 mqttServer.StartedAsync += MqttServer_StartedAsync;
-                //停止后事件（异步）
                 mqttServer.StoppedAsync += MqttServer_StoppedAsync;
-                //启动服务（异步）等待执行完成
-                mqttServer.StartAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-                //设置状态
+                await mqttServer.StartAsync().ConfigureAwait(false);
                 states = States.On;
                 return EndOperate(true);
             }
             catch (Exception ex)
             {
-                Off(true);
+                await OffAsync(true, token).ConfigureAwait(false);
                 return EndOperate(false, ex.Message, exception: ex);
             }
         }
+
         /// <inheritdoc/>
-        public OperateResult Off(bool hardClose = false)
+        public async Task<OperateResult> OffAsync(bool hardClose = false, CancellationToken token = default)
         {
-            //开始记录运行时间
             BegOperate();
             try
             {
-                if (!hardClose)
+                if (!hardClose && mqttServer == null)
                 {
-                    if (mqttServer == null)
-                    {
-                        return EndOperate(false, "未连接");
-                    }
+                    return EndOperate(false, "未连接");
                 }
-                //关闭服务（异步）等待执行完成
-                mqttServer?.StopAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-                //释放
-                mqttServer?.Dispose();
-                //设置状态
+                if (mqttServer != null)
+                {
+                    await mqttServer.StopAsync().ConfigureAwait(false);
+                    mqttServer.Dispose();
+                    mqttServer = null;
+                }
                 states = States.Off;
                 return EndOperate(true);
             }
@@ -219,16 +204,8 @@ namespace Snet.Iot.Daq.Core.mqtt.service
                 return EndOperate(false, ex.Message, exception: ex);
             }
         }
+
         /// <inheritdoc/>
-        public OperateResult GetStatus()
-        {
-            return EndOperate(states == States.On, states == States.On ? "已启动" : "未启动", methodName: BegOperate());
-        }
-        /// <inheritdoc/>
-        public async Task<OperateResult> OffAsync(bool hardClose = false, CancellationToken token = default) => await Task.Run(() => Off(hardClose), token);
-        /// <inheritdoc/>
-        public async Task<OperateResult> OnAsync(CancellationToken token = default) => await Task.Run(() => On(), token);
-        /// <inheritdoc/>
-        public async Task<OperateResult> GetStatusAsync(CancellationToken token = default) => await Task.Run(() => GetStatus(), token);
+        public async Task<OperateResult> GetStatusAsync(CancellationToken token = default) => await Task.Run(GetStatus, token).ConfigureAwait(false);
     }
 }

@@ -27,12 +27,12 @@ namespace Snet.Iot.Daq.Core.opc.ua.service
         /// <summary>
         /// OPCUA 安装、配置、运行
         /// </summary>
-        private ApplicationInstance AI { get; set; }
+        private ApplicationInstance? AI { get; set; }
 
         /// <summary>
         /// opcua服务
         /// </summary>
-        private ReferenceServer service;
+        private ReferenceServer? service;
 
         /// <summary>
         /// 遥测
@@ -47,12 +47,17 @@ namespace Snet.Iot.Daq.Core.opc.ua.service
         /// <summary>
         /// 全局生命周期令牌
         /// </summary>
-        private CancellationTokenSource tokenSource;
+        private CancellationTokenSource? tokenSource;
+
+        /// <summary>
+        /// 状态监控后台任务（保存引用以便关闭时等待完成）
+        /// </summary>
+        private Task? _statusTask;
 
         /// <summary>
         /// 是否已启动
         /// </summary>
-        public bool IsStart { get; set; }
+        public bool IsStart { get; private set; }
 
         #region 私有函数
 
@@ -61,23 +66,20 @@ namespace Snet.Iot.Daq.Core.opc.ua.service
         /// </summary>
         private async Task StatusThread(CancellationToken token)
         {
-            await Task.Run(async () =>
+            while (service != null)
             {
-                while (service != null)
+                if (DateTime.UtcNow - LastEventTime > TimeSpan.FromMilliseconds(5000))
                 {
-                    if (DateTime.UtcNow - LastEventTime > TimeSpan.FromMilliseconds(5000))
+                    IList<ISession> sessions = service.CurrentInstance.SessionManager.GetSessions();
+                    for (int ii = 0; ii < sessions.Count; ii++)
                     {
-                        IList<ISession> sessions = service.CurrentInstance.SessionManager.GetSessions();
-                        for (int ii = 0; ii < sessions.Count; ii++)
-                        {
-                            ISession session = sessions[ii];
-                            PrintSessionStatus(session, "心跳包", true);
-                        }
-                        LastEventTime = DateTime.UtcNow;
+                        ISession session = sessions[ii];
+                        PrintSessionStatus(session, "心跳包", true);
                     }
-                    await Task.Delay(1000, token).ConfigureAwait(false);
+                    LastEventTime = DateTime.UtcNow;
                 }
-            }, token);
+                await Task.Delay(1000, token).ConfigureAwait(false);
+            }
         }
 
         /// <summary>
@@ -129,7 +131,7 @@ namespace Snet.Iot.Daq.Core.opc.ua.service
         /// <summary>
         /// 文件夹信息
         /// </summary>
-        ConcurrentDictionary<string, FolderState> FolderInfo = new ConcurrentDictionary<string, FolderState>();
+        private readonly ConcurrentDictionary<string, FolderState> FolderInfo = new();
 
         /// <summary>
         /// 创建文件夹
@@ -196,7 +198,7 @@ namespace Snet.Iot.Daq.Core.opc.ua.service
                 OperateResult result = service.NodeManage.RemoveFolder(folderNameArray);
                 if (result.Status)
                 {
-                    List<string> FailMessage = new List<string>();
+                    var failMessages = new List<string>();
                     //在看外部是否存在此文件夹，有的话就移除
                     foreach (NodeId item in folderNameArray)
                     {
@@ -205,13 +207,13 @@ namespace Snet.Iot.Daq.Core.opc.ua.service
                         {
                             if (!FolderInfo.TryRemove(index))
                             {
-                                FailMessage.Add($"{index.Value.NodeId.Identifier} 删除失败");
+                                failMessages.Add($"{index.Value.NodeId.Identifier} 删除失败");
                             }
                         }
                     }
-                    if (FailMessage.Count > 0)
+                    if (failMessages.Count > 0)
                     {
-                        return EndOperate(false, $"内部异常：{FailMessage.ToJson(true)}");
+                        return EndOperate(false, $"内部异常：{failMessages.ToJson(true)}");
                     }
                     return EndOperate(true);
                 }
@@ -516,8 +518,8 @@ namespace Snet.Iot.Daq.Core.opc.ua.service
                     tokenSource = new CancellationTokenSource();
                 }
 
-                // 启动状态线程
-                _ = StatusThread(tokenSource.Token);
+                // 启动状态线程（保存 Task 引用，Off() 时可正确等待）
+                _statusTask = StatusThread(tokenSource.Token);
 
                 //激活
                 service.CurrentInstance.SessionManager.SessionActivated += SessionManager_Session;
@@ -540,35 +542,37 @@ namespace Snet.Iot.Daq.Core.opc.ua.service
             }
         }
         /// <inheritdoc/>
-        public OperateResult Off(bool HardClose = false)
+        public OperateResult Off(bool hardClose = false)
         {
             //开始记录运行时间
             BegOperate();
             try
             {
-                if (!HardClose)
+                if (!hardClose)
                 {
                     if (!GetStatus().GetDetails(out string? message))
                     {
                         return EndOperate(false, message);
                     }
                 }
-                // 取消并释放令牌
+                // 取消并释放令牌，等待后台状态线程退出
                 if (tokenSource != null)
                 {
                     tokenSource.Cancel();
+                    try { _statusTask?.GetAwaiter().GetResult(); } catch (OperationCanceledException) { }
                     tokenSource.Dispose();
                     tokenSource = null;
+                    _statusTask = null;
                 }
                 if (service != null)
                 {
                     FolderInfo.Clear();
-                    //停止节点管理服务
-                    service?.NodeManage?.Dispose();
-                    service?.NodeManage?.DeleteAddressSpace();
+                    // 先清理地址空间，再 Dispose（避免 use-after-dispose）
+                    service.NodeManage?.DeleteAddressSpace();
+                    service.NodeManage?.Dispose();
                     // 停止服务并处理
-                    service?.StopAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-                    service?.Dispose();
+                    service.StopAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+                    service.Dispose();
                     // 停止状态线程
                     service = null;
                 }
@@ -591,12 +595,10 @@ namespace Snet.Iot.Daq.Core.opc.ua.service
                 {
                     return EndOperate(false, message);
                 }
-                // 创建目标字典
-                ConcurrentDictionary<string, object> targetDict = new ConcurrentDictionary<string, object>();
+                // 将元组值转换为 object 字典（单线程路径，无需并发容器）
+                var targetDict = new ConcurrentDictionary<string, object>();
                 foreach (var kvp in values)
-                {
-                    targetDict.TryAdd(kvp.Key, kvp.Value);
-                }
+                    targetDict[kvp.Key] = kvp.Value;
                 return Write(targetDict);
             }
             catch (Exception ex)
@@ -606,7 +608,7 @@ namespace Snet.Iot.Daq.Core.opc.ua.service
         }
 
         /// <inheritdoc/>
-        public OperateResult Write(ConcurrentDictionary<string, object> Values)
+        public OperateResult Write(ConcurrentDictionary<string, object> values)
         {
             //开始记录运行时间
             BegOperate();
@@ -616,7 +618,7 @@ namespace Snet.Iot.Daq.Core.opc.ua.service
                 {
                     return EndOperate(false, message);
                 }
-                return EndOperate(service.NodeManage.WriteAddress(Values));
+                return EndOperate(service.NodeManage.WriteAddress(values));
             }
             catch (Exception ex)
             {
@@ -626,9 +628,10 @@ namespace Snet.Iot.Daq.Core.opc.ua.service
         /// <inheritdoc/>
         public OperateResult Write(ConcurrentDictionary<string, WriteModel> values)
         {
+            BegOperate();
             if (values == null || values.Count <= 0)
             {
-                return OperateResult.CreateFailureResult("数据不能为空");
+                return EndOperate(false, "数据不能为空");
             }
             ConcurrentDictionary<string, object> param = new ConcurrentDictionary<string, object>();
             foreach (var item in values)

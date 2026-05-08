@@ -19,8 +19,8 @@ namespace Snet.Iot.Daq.Core.@interface
         string Guid { get; set; }
 
         /// <summary>
-        /// 地址详情        
-        /// /// </summary>
+        /// 地址详情
+        /// </summary>
         IAddressModel AddressDetails { get; set; }
 
         /// <summary>

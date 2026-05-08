@@ -26,22 +26,22 @@ namespace Snet.Iot.Daq
             MenuItemsSource = MenuItemsOperate(App.LanguageOperate);
             FooterMenuItemsSource = FooterMenuItemsOperate(App.LanguageOperate);
 
-            this.settings = settings;
+            this._settings = settings;
             LanguageHandler.OnLanguageEvent += LanguageHandler_OnLanguageEvent;
-            LanguageHandler_OnLanguageEvent(null, null);
+            LanguageHandler_OnLanguageEvent(this, new EventLanguageResult());
         }
 
         /// <summary>
         /// 系统设置处理器
         /// </summary>
-        private SettingsHandler settings;
+        private SettingsHandler _settings;
 
         /// <summary>
         /// 语言切换事件
         /// </summary>
         private void LanguageHandler_OnLanguageEvent(object? sender, EventLanguageResult e)
         {
-            SystemTitle = $"{LanguageHandler.GetLanguageValue("SystemTitle", App.LanguageOperate)}{(settings.IsRunAsAdmin() ? " [ " + LanguageHandler.GetLanguageValue("管理员运行", App.LanguageOperate) + " ]" : string.Empty)}";
+            SystemTitle = $"{LanguageHandler.GetLanguageValue("SystemTitle", App.LanguageOperate)}{(_settings.IsRunAsAdmin() ? " [ " + LanguageHandler.GetLanguageValue("管理员运行", App.LanguageOperate) + " ]" : string.Empty)}";
         }
 
         /// <summary>

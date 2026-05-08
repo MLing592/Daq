@@ -71,7 +71,7 @@ namespace Snet.Iot.Daq.Core.handler
             // 快照遍历，避免在迭代期间集合被修改
             foreach (var item in icoMq.ToArray())
             {
-                item.Value.Dispose();
+                item.Value?.Dispose();
             }
             icoMq.Clear();
             _dataHandlers.Clear();
@@ -110,8 +110,13 @@ namespace Snet.Iot.Daq.Core.handler
         {
             if (!icoMq.TryGetValue(guid, out IMq? operate))
             {
-                operate = await basics.CreateNewObjetcAsync<IMq>();
-                icoMq.TryAdd(guid, operate);
+                IMq? newOperate = await basics.CreateNewObjectAsync<IMq>();
+                operate = icoMq.GetOrAdd(guid, newOperate!);
+                // 若竞态导致当前实例未被采用，释放多余实例
+                if (!ReferenceEquals(operate, newOperate) && newOperate != null)
+                {
+                    await newOperate.DisposeAsync();
+                }
             }
 
             if (operate == null)

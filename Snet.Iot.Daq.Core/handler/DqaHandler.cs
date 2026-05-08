@@ -49,7 +49,7 @@ namespace Snet.Iot.Daq.Core.handler
             // 快照遍历，避免在迭代期间集合被修改
             foreach (var item in icoDaq.ToArray())
             {
-                item.Value.Dispose();
+                item.Value?.Dispose();
             }
             icoDaq.Clear();
             _dataHandlers.Clear();
@@ -113,8 +113,13 @@ namespace Snet.Iot.Daq.Core.handler
         {
             if (!icoDaq.TryGetValue(guid, out IDaq? operate))
             {
-                operate = await basics.CreateNewObjetcAsync<IDaq>();
-                icoDaq.TryAdd(guid, operate);
+                IDaq? newOperate = await basics.CreateNewObjectAsync<IDaq>();
+                operate = icoDaq.GetOrAdd(guid, newOperate!);
+                // 若竞态导致当前实例未被采用，释放多余实例
+                if (!ReferenceEquals(operate, newOperate) && newOperate != null)
+                {
+                    await newOperate.DisposeAsync();
+                }
             }
 
             if (operate == null)
@@ -295,8 +300,7 @@ namespace Snet.Iot.Daq.Core.handler
             }
 
             // 组织写入数据：以地址字符串为 Key，写入模型为 Value
-            var keys = new ConcurrentDictionary<string, WriteModel>();
-            keys[address.Address] = write;
+            var keys = new ConcurrentDictionary<string, WriteModel> { [address.Address] = write };
 
             // 执行写入操作
             return await open.operate.WriteAsync(keys);

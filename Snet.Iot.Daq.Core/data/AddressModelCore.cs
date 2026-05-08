@@ -24,10 +24,9 @@ namespace Snet.Iot.Daq.Core.data
             remove => OnInfoEventWrapperAsync.RemoveHandler(value);
         }
         /// <inheritdoc/>
-        public Task OnInfoEventHandlerAsync(object? sender, EventInfoResult e)
+        public async Task OnInfoEventHandlerAsync(object? sender, EventInfoResult e)
         {
-            OnInfoEventWrapperAsync.InvokeAsync(sender, e);
-            return Task.CompletedTask;
+            await OnInfoEventWrapperAsync.InvokeAsync(sender, e);
         }
 
         /// <inheritdoc/>

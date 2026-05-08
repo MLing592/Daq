@@ -54,7 +54,7 @@
             <snet:NotifyIcon.Menu>
                 <ContextMenu x:Name="TrayContextMenu" Style="{StaticResource UiContextMenu}">
                     <!--  设备状态项将在代码中动态添加到此分隔符之前  -->
-                    <Separator x:Name="TrayDeviceSeparator" />
+                    <Separator x:Name="TrayDeviceSeparator" Margin="0,3" />
                     <uis:MenuItem
                         Command="{Binding ShowWindow}"
                         Header="{snet:Loc 显示窗口}"

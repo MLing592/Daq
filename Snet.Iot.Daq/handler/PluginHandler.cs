@@ -26,10 +26,14 @@ namespace Snet.Iot.Daq.handler
             {
                 return GlobalConfigModel.PluginDict;
             }
-            foreach (var item in PluginHandlerCore.GetPluginUIConfig<ObservableCollection<PluginConfigModel>>(GlobalConfigModel.UI_PluginConfigPath))
+            var plugins = PluginHandlerCore.GetPluginUIConfig<ObservableCollection<PluginConfigModel>>(GlobalConfigModel.UI_PluginConfigPath);
+            if (plugins != null)
             {
-                GlobalConfigModel.PluginDict[item.Guid] = item;
-                GlobalConfigModel.PluginDict[item.Guid].OnInfoEventHandlerAsync(item, EventInfoResult.CreateSuccessResult("set enevt"));
+                foreach (var item in plugins)
+                {
+                    GlobalConfigModel.PluginDict[item.Guid] = item;
+                    GlobalConfigModel.PluginDict[item.Guid].OnInfoEventHandlerAsync(item, EventInfoResult.CreateSuccessResult("set event"));
+                }
             }
             return GlobalConfigModel.PluginDict;
         }
@@ -42,7 +46,7 @@ namespace Snet.Iot.Daq.handler
         public static void SetPlugin(this PluginConfigModel plugin)
         {
             GlobalConfigModel.PluginDict[plugin.Guid] = plugin;
-            GlobalConfigModel.PluginDict[plugin.Guid].OnInfoEventHandlerAsync(plugin, EventInfoResult.CreateSuccessResult("set enevt"));
+            GlobalConfigModel.PluginDict[plugin.Guid].OnInfoEventHandlerAsync(plugin, EventInfoResult.CreateSuccessResult("set event"));
             _ = GlobalConfigModel.RefreshAsync().ConfigureAwait(false);
         }
 

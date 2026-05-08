@@ -38,16 +38,16 @@ namespace Snet.Iot.Daq
         public MainWindow()
         {
             InitializeComponent();
-            // 默认导航到控制台页面
-            NavigationViewControls.SelectNavigationViewDefaultItem(this, typeof(Snet.Iot.Daq.view.Console), App.LanguageOperate, "mainGrid");
 
             // 监听托盘设备集合变化，动态重建托盘菜单
             GlobalConfigModel.TrayDevices.CollectionChanged += OnTrayDevicesCollectionChanged;
 
             // 监听语言切换事件，语言变化时重建托盘菜单以更新显示文本
             LanguageHandler.OnLanguageEvent += LanguageHandler_OnLanguageEvent;
-        }
 
+            // 默认导航到控制台页面
+            NavigationViewControls.SelectNavigationViewDefaultItem(this, typeof(view.Console), App.LanguageOperate, "mainGrid");
+        }
 
 
         /// <summary>
@@ -73,14 +73,13 @@ namespace Snet.Iot.Daq
         {
             Dispatcher.BeginInvoke(() =>
             {
-                // 🔥 恢复任务栏
                 ShowInTaskbar = true;
 
-                // 🔥 恢复窗口状态
+                if (!IsVisible)
+                    Show();
+
                 if (WindowState == WindowState.Minimized)
-                {
                     WindowState = WindowState.Normal;
-                }
 
                 Focus();
 
@@ -93,7 +92,7 @@ namespace Snet.Iot.Daq
         /// </summary>
         private void OnTrayDevicesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
         {
-            Dispatcher.Invoke(RebuildTrayDeviceMenu);
+            Dispatcher.BeginInvoke(RebuildTrayDeviceMenu);
         }
 
         /// <summary>
@@ -101,7 +100,7 @@ namespace Snet.Iot.Daq
         /// </summary>
         private void LanguageHandler_OnLanguageEvent(object? sender, Model.data.EventLanguageResult e)
         {
-            Dispatcher.Invoke(RebuildTrayDeviceMenu);
+            Dispatcher.BeginInvoke(RebuildTrayDeviceMenu);
         }
 
         /// <summary>
@@ -147,24 +146,17 @@ namespace Snet.Iot.Daq
         /// <returns>构建好的设备菜单项</returns>
         private FrameworkElement CreateDeviceMenuItem(ConsoleDeviceModel model)
         {
-            // 创建头部面板：LED 指示灯 + 设备名称
-            var header = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-
-            // LED 指示灯控件，绑定设备状态属性
+            // LED 指示灯
             var led = new LedGaugeControl
             {
                 Width = 16,
                 Height = 16,
-                OffLightness = 0.1
+                OffLightness = 0.1,
+                VerticalAlignment = VerticalAlignment.Center
             };
             led.SetBinding(LedGaugeControl.IsFlashingProperty, new Binding(nameof(ConsoleDeviceModel.DeviceStatusFlashing)) { Source = model });
             led.SetBinding(LedGaugeControl.IsOnProperty, new Binding(nameof(ConsoleDeviceModel.DeviceStatusChangLiang)) { Source = model });
             led.SetBinding(LedGaugeControl.ColorProperty, new Binding(nameof(ConsoleDeviceModel.LedColor)) { Source = model });
-            header.Children.Add(led);
 
             // 设备名称文本
             var nameText = new TextBlock
@@ -173,13 +165,38 @@ namespace Snet.Iot.Daq
                 VerticalAlignment = VerticalAlignment.Center
             };
             nameText.SetBinding(TextBlock.TextProperty, new Binding(nameof(ConsoleDeviceModel.DeviceName)) { Source = model });
+
+            // 头部面板：不设置 VerticalAlignment，让模板 ContentPresenter 按 VerticalContentAlignment 决定对齐
+            var header = new StackPanel
+            {
+                Orientation = Orientation.Horizontal
+            };
+            header.Children.Add(led);
             header.Children.Add(nameText);
 
-            // 创建父级菜单项
+            // Icon 属性对应模板中专用的图标列，Header 只放文字，chevron 箭头自然居中
             var menuItem = new MenuItem
             {
                 Header = header,
-                Tag = DeviceMenuItemTag
+                Tag = DeviceMenuItemTag,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Padding = new Thickness(0)
+            };
+
+            // WPF UI SubmenuHeader 模板中 Chevron 硬编码了 Margin="0,3,0,0"（上偏 3px），
+            // Header ContentPresenter 也没有 VerticalAlignment="Center"，导致箭头偏下。
+            // 在模板应用后通过 Loaded 事件直接修正这两个值。
+            menuItem.Loaded += static (s, _) =>
+            {
+                if (s is not System.Windows.Controls.Control ctrl) return;
+
+                // 修正 Chevron 的 Margin，去掉上方 3px 偏移
+                if (ctrl.Template?.FindName("Chevron", ctrl) is SymbolIcon chevron)
+                    chevron.Margin = new Thickness(0);
+
+                // 修正 Header ContentPresenter 垂直居中
+                if (ctrl.Template?.FindName("Header", ctrl) is ContentPresenter headerPresenter)
+                    headerPresenter.VerticalAlignment = VerticalAlignment.Center;
             };
 
             // 添加子菜单：采集、停止、重试

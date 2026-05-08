@@ -29,10 +29,9 @@ namespace Snet.Iot.Daq.Core.data
         /// </summary>
         /// <param name="sender">自身对象</param>
         /// <param name="e">事件结果</param>
-        public Task OnInfoEventHandlerAsync(object? sender, EventInfoResult e)
+        public async Task OnInfoEventHandlerAsync(object? sender, EventInfoResult e)
         {
-            OnInfoEventWrapperAsync.InvokeAsync(sender, e);
-            return Task.CompletedTask;
+            await OnInfoEventWrapperAsync.InvokeAsync(sender, e);
         }
 
         /// <summary>
@@ -146,12 +145,12 @@ namespace Snet.Iot.Daq.Core.data
         /// <summary>
         /// 配置路径
         /// </summary>
-        public string ConfigPath { get; set; }
+        public string ConfigPath { get; set; } = string.Empty;
 
         /// <summary>
         /// 参数
         /// </summary>
-        public string Param { get; set; }
+        public string Param { get; set; } = string.Empty;
 
         /// <summary>
         /// webapi数据

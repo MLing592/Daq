@@ -1,4 +1,5 @@
 ﻿using Snet.Iot.Daq.Core.data;
+using Snet.Iot.Daq.Core.handler;
 using Snet.Iot.Daq.Core.@interface;
 using Snet.Iot.Daq.data;
 using Snet.Model.data;
@@ -22,69 +23,12 @@ namespace Snet.Iot.Daq.handler
         /// <param name="keySelectors">查重字段选择器（可多个）</param>
         public static BatchInsertResult InsertUnique<T, TKey>(SQLiteConnection db, IEnumerable<T> items, params Func<T, TKey>[] keySelectors) where T : class, new()
         {
-            var result = new BatchInsertResult();
-
-            // 1️⃣ 读取已有数据
-            var existingKeys = keySelectors
-                .Select(_ => new HashSet<TKey>())
-                .ToArray();
-
-            foreach (var item in db.Table<T>())
-            {
-                for (int i = 0; i < keySelectors.Length; i++)
-                {
-                    var key = keySelectors[i](item);
-                    if (key != null)
-                        existingKeys[i].Add(key);
-                }
-            }
-
-            // 2️⃣ 事务插入
-            db.RunInTransaction(() =>
-            {
-                foreach (var item in items)
-                {
-                    bool isDuplicate = false;
-
-                    for (int i = 0; i < keySelectors.Length; i++)
-                    {
-                        var key = keySelectors[i](item);
-                        if (key != null && existingKeys[i].Contains(key))
-                        {
-                            isDuplicate = true;
-                            break;
-                        }
-                    }
-
-                    if (isDuplicate)
-                    {
-                        result.Duplicate++;
-                        continue;
-                    }
-
-                    if (db.Insert(item) > 0)
-                    {
-                        result.Success++;
-
-                        //往全局集合中添加
-                        (item as IAddressModel).SetAddress();
-
-                        // 插入成功，加入集合，防止同批次重复
-                        for (int i = 0; i < keySelectors.Length; i++)
-                        {
-                            var key = keySelectors[i](item);
-                            if (key != null)
-                                existingKeys[i].Add(key);
-                        }
-                    }
-                    else
-                    {
-                        result.Failed++;
-                    }
-                }
-            });
-
-            return result;
+            return ProjectHandlerCore.InsertUnique(
+                db,
+                GlobalConfigModel.DbLock,
+                items,
+                onInserted: item => (item as IAddressModel)?.SetAddress(),
+                keySelectors);
         }
 
         /// <summary>
@@ -94,10 +38,17 @@ namespace Snet.Iot.Daq.handler
         /// <returns>全局地址字典（Key = Guid，Value = AddressModel）</returns>
         public static ConcurrentDictionary<string, IAddressModel> GetAllAddress()
         {
-            foreach (var item in GlobalConfigModel.sqliteOperate.Table<AddressModel>())
+            List<AddressModel> rows;
+            lock (GlobalConfigModel.DbLock)
+            {
+                rows = GlobalConfigModel.sqliteOperate.Table<AddressModel>().ToList();
+            }
+            foreach (var item in rows)
             {
                 GlobalConfigModel.AddressDict[item.Guid] = item;
-                GlobalConfigModel.AddressDict[item.Guid].OnInfoEventHandlerAsync(item, EventInfoResult.CreateSuccessResult("set enevt"));
+                _ = GlobalConfigModel.AddressDict[item.Guid]
+                    .OnInfoEventHandlerAsync(item, EventInfoResult.CreateSuccessResult("set event"))
+                    .ContinueWith(t => Snet.Log.LogHelper.Error(t.Exception?.Message), TaskContinuationOptions.OnlyOnFaulted);
             }
             return GlobalConfigModel.AddressDict;
         }
@@ -110,8 +61,11 @@ namespace Snet.Iot.Daq.handler
         public static void SetAddress(this IAddressModel address)
         {
             GlobalConfigModel.AddressDict[address.Guid] = address;
-            GlobalConfigModel.AddressDict[address.Guid].OnInfoEventHandlerAsync(address, EventInfoResult.CreateSuccessResult("set enevt"));
-            _ = GlobalConfigModel.RefreshAsync().ConfigureAwait(false);
+            _ = GlobalConfigModel.AddressDict[address.Guid]
+                .OnInfoEventHandlerAsync(address, EventInfoResult.CreateSuccessResult("set event"))
+                .ContinueWith(t => Snet.Log.LogHelper.Error(t.Exception?.Message), TaskContinuationOptions.OnlyOnFaulted);
+            _ = GlobalConfigModel.RefreshAsync()
+                .ContinueWith(t => Snet.Log.LogHelper.Error(t.Exception?.Message), TaskContinuationOptions.OnlyOnFaulted);
         }
 
         /// <summary>

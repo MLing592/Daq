@@ -146,8 +146,8 @@ namespace Snet.Iot.Daq.Core.data
         public string Guid { get; set; }
 
         /// <summary>
-        /// 地址详情        
-        /// /// </summary>
+        /// 地址详情
+        /// </summary>
         [Browsable(false)]
         [Description("地址详情")]
         public IAddressModel AddressDetails
@@ -204,9 +204,10 @@ namespace Snet.Iot.Daq.Core.data
         [System.Text.Json.Serialization.JsonIgnore]
         [Newtonsoft.Json.JsonIgnore]
         private PluginConfigModel _mqDetails;
-        private async Task MqDetails_OnInfoEventAsync(object? sender, Model.data.EventInfoResult e)
+        private Task MqDetails_OnInfoEventAsync(object? sender, Model.data.EventInfoResult e)
         {
             UpdateMqName();
+            return Task.CompletedTask;
         }
 
 
@@ -217,9 +218,10 @@ namespace Snet.Iot.Daq.Core.data
         /// 展开所有父级<br/>
         /// </summary>
         /// <param name="models">外部的集合</param>
-        public virtual async Task SetAsync(ObservableCollection<IProjectDetailsTreeViewModel> models)
+        public virtual Task SetAsync(ObservableCollection<IProjectDetailsTreeViewModel> models)
         {
             //外部需要重写
+            return Task.CompletedTask;
         }
 
         /// <summary>

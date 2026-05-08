@@ -172,9 +172,10 @@ namespace Snet.Iot.Daq.Core.data
         /// 展开所有父级<br/>
         /// </summary>
         /// <param name="models">外部的集合</param>
-        public virtual async Task SetAsync(ObservableCollection<IProjectTreeViewModel> models)
+        public virtual Task SetAsync(ObservableCollection<IProjectTreeViewModel> models)
         {
             //外部重写
+            return Task.CompletedTask;
         }
 
         /// <summary>

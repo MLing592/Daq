@@ -84,6 +84,7 @@
             lock (_lock)
             {
                 _isRunning = false;
+                _startTimestamp = 0;
                 _totalSeconds = 0;
             }
         }

@@ -32,9 +32,9 @@ namespace Snet.Iot.Daq.Core.handler
             const string ellipsis = "...";
             int ellipsisBytes = encoding.GetByteCount(ellipsis);
 
-            // 连省略号都放不下的极端情况
+            // 连省略号都放不下的极端情况，按字节裁剪省略号
             if (ellipsisBytes >= maxBytes)
-                return ellipsis.Substring(0, maxBytes);
+                return maxBytes <= 0 ? string.Empty : ellipsis[..Math.Min(maxBytes, ellipsis.Length)];
 
             // 计算正文可用的字节预算
             int allowedBytes = maxBytes - ellipsisBytes;
