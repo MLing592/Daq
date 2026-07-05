@@ -1,6 +1,8 @@
 # Snet.Iot.Daq 架构设计文档
 
-> **版本**: v1.0 | **更新日期**: 2026-06-21 | **框架**: .NET 10.0 | **类型**: WPF 桌面应用
+> **版本**: v1.1 | **更新日期**: 2026-07-05 | **框架**: .NET 10.0 | **类型**: WPF 桌面应用
+>
+> **配套文件**: 完整的 drawio 架构图见 [`arch.drawio`](./arch.drawio)（可用 [draw.io](https://app.diagrams.net/) 打开，含 7 个页面标签）
 
 ---
 
@@ -8,6 +10,7 @@
 
 1. [项目概述](#1-项目概述)
 2. [解决方案结构](#2-解决方案结构)
+   - [2.1 代码分层架构](#21-代码分层架构)
 3. [核心 UML 类图](#3-核心-uml-类图)
 4. [核心流程图](#4-核心流程图)
 5. [设计模式分析](#5-设计模式分析)
@@ -63,6 +66,72 @@ flowchart LR
 | **Snet.Iot.Daq.AddressTest** | 控制台 | - | 地址读写功能测试工具 |
 | **Snet.Iot.Daq.MqPerformanceTesting** | 控制台 | - | MQTT 消息传输性能压测工具 |
 | **Snet.Pack.Manage.Tool** | 控制台 | - | 插件 ZIP 打包管理工具 |
+
+### 2.1 代码分层架构
+
+项目采用 **四层架构**，依赖方向严格自上而下。每一层只依赖下方的层，不反向引用。
+
+```mermaid
+flowchart TB
+    subgraph L4["Layer 4 — WPF 应用层 (Snet.Iot.Daq · net10.0-windows)"]
+        direction LR
+        APP["App.xaml.cs\n应用入口\n单实例 / DI / 插件初始化"]
+        VIEW["view/\nWPF Views\nMainWindow, Console\nProjectDetails, Settings"]
+        VM["viewModel/\nMVVM ViewModel\nConsoleModel, ConsoleDeviceModel\nHandlerModel, 各配置VM"]
+        UH["handler/\nUI 桥接层\nPluginHandler\nAddressHandler\nProjectHandler"]
+        UD["data/\n全局状态\nGlobalConfigModel\nAddressModel"]
+        CHART["chart/\n系统监控\nScottPlot 实时图表"]
+    end
+
+    subgraph L3["Layer 3 — 核心业务层 (Snet.Iot.Daq.Core · net10.0)"]
+        direction LR
+        CH["handler/\nDqaHandler, MqHandler\nPluginHandlerCore\nAutoPackHandler"]
+        CI["interface/\nIAddressModel\nIProjectTreeViewModel"]
+        CD["data/\nPluginConfigModel\nAddressModelCore"]
+        CM["mvvm/\nBindNotify\n(字典属性包)"]
+        CS1["mqtt/service/\nMqttServiceOperate\n(MQTTnet Broker)"]
+        CS2["opc/ua/service/\nOpcUaServiceOperate\n(OPC UA Server)"]
+    end
+
+    subgraph L2["Layer 2 — 框架层 (Snet.* NuGet 包)"]
+        direction LR
+        SM["Snet.Model\nIDaq / IMq 接口\nOperateResult\nAddress / WriteModel"]
+        SC["Snet.Core\nCoreUnify 基类\nPluginOperate 插件工厂\nBytesHandler"]
+        SU["Snet.Utility\nFileHandler\nJSON 扩展"]
+        SL["Snet.Log\nLogHelper"]
+        SW["Snet.Windows.Controls\nInjectionWpf (DI)\nPropertyControl"]
+        SMT["Snet.Mqtt\nMqttClient"]
+    end
+
+    subgraph L1["Layer 1 — 外部插件层 (lib/ 目录, 独立 DLL)"]
+        direction LR
+        DP["IDaq 实现 (采集插件)\nSiemens, Modbus\nMitsubishi, Omron\nOpcUa, Freedom"]
+        MP["IMq 实现 (传输插件)\nMQTT, RabbitMQ\nKafka"]
+    end
+
+    L4 -->|"ProjectReference\n编译时单向依赖"| L3
+    L3 -->|"NuGet 依赖"| L2
+    L4 -.->|"NuGet 依赖\n(Snet.Windows.Controls)"| L2
+    L3 -->|"运行时加载\nPluginOperate.InitPlugin()\n通过 IDaq/IMq 接口通信"| L1
+    L2 -.->|"接口契约\nIDaq/IMq 定义于此"| L1
+```
+
+**各层职责与关键类**
+
+| 层 | 项目/来源 | 职责 | 关键类 / 命名空间 |
+|----|-----------|------|-------------------|
+| **Layer 4** | `Snet.Iot.Daq` | WPF 界面展示、用户交互、全局状态管理 | `App`, `GlobalConfigModel`, `ConsoleDeviceModel`, `PluginHandler`, `AddressHandler` |
+| **Layer 3** | `Snet.Iot.Daq.Core` | 业务逻辑核心：插件管理、采集/消息 Handler、内置服务端 | `DqaHandler`, `MqHandler`, `PluginHandlerCore`, `MqttServiceOperate`, `OpcUaServiceOperate`, `BindNotify` |
+| **Layer 2** | NuGet 包 | 基础框架：接口定义、插件加载机制、操作基类、工具库 | `IDaq`/`IMq` (Snet.Model), `CoreUnify<T,TB>` / `PluginOperate` (Snet.Core), `InjectionWpf` (Snet.Windows.Controls) |
+| **Layer 1** | `lib/` 目录 DLL | 具体协议实现：工业设备采集、消息队列传输 | `Snet.Siemens`, `Snet.Modbus`, `Snet.Mqtt` (传输插件) 等 |
+
+**层间关系说明**
+
+- **L4 → L3**：编译时 `ProjectReference` 单向依赖。UI 层通过 ViewModel 直接创建并持有 Core 层的 Handler 实例（如 `ConsoleDeviceModel` 持有 `DqaHandler`）。
+- **L3 → L2**：NuGet 包引用。Core 层继承 `CoreUnify<T,TB>` 基类，使用 `PluginOperate` 加载插件，通过 `IDaq`/`IMq` 接口与插件通信。
+- **L4 → L2**：跨层 NuGet 依赖。UI 层直接引用 `Snet.Windows.Controls`（DI 容器 `InjectionWpf`、属性编辑器 `PropertyControl`），不经过 Core 层。
+- **L3 → L1**：运行时动态加载。`PluginHandlerCore.PluginOperate.InitPlugin(dllPath, interfaceName)` 在运行时加载 `lib/` 目录下的插件 DLL，通过 `CreateAsync<T>()` 创建 `IDaq`/`IMq` 实例。
+- **L2 → L1**：接口契约。`Snet.Model` 中定义的 `IDaq`/`IMq` 接口是框架层与插件层之间的唯一契约，确保松耦合。
 
 ---
 
